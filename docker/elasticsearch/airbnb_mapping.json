@@ -1,0 +1,46 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  },
+  "mappings": {
+    "properties": {
+      "listing_id": { "type": "long" },
+      "name": {
+        "type": "text",
+        "fields": {
+          "keyword": { "type": "keyword", "ignore_above": 256 }
+        }
+      },
+      "host_id": { "type": "long" },
+      "host_name": {
+        "type": "text",
+        "fields": {
+          "keyword": { "type": "keyword", "ignore_above": 256 }
+        }
+      },
+      "calculated_host_listings_count": { "type": "integer" },
+
+      "neighbourhood_group": { "type": "keyword" },
+      "neighbourhood": { "type": "keyword" },
+      "location": { "type": "geo_point" },
+
+      "room_type": { "type": "keyword" },
+      "price": { "type": "double" },
+      "price_category": { "type": "keyword" },
+      "minimum_nights": { "type": "integer" },
+
+      "number_of_reviews": { "type": "integer" },
+      "last_review": {
+        "type": "date",
+        "format": "yyyy-MM-dd||strict_date_optional_time||epoch_millis"
+      },
+      "reviews_per_month": { "type": "double" },
+
+      "availability_365": { "type": "integer" },
+      "availability_category": { "type": "keyword" },
+
+      "indexed_at": { "type": "date" }
+    }
+  }
+}

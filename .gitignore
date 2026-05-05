@@ -1,0 +1,36 @@
+# Environment files
+# .env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Docker/local runtime
+*.pid
+
+# LaTeX build files
+# *.aux
+# *.bbl
+# *.blg
+# *.fdb_latexmk
+# *.fls
+# *.log
+# *.out
+# *.synctex.gz
+# *.toc
+
+# Large/local-only files
+# *.zip
