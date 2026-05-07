@@ -30,34 +30,6 @@ def get_postgres_connection():
     )
 
 
-def wait_for_postgres():
-    print("Waiting for PostgreSQL data...", flush=True)
-
-    for attempt in range(90):
-        try:
-            conn = get_postgres_connection()
-            cur = conn.cursor()
-
-            cur.execute("SELECT COUNT(*) FROM listings;")
-            count = cur.fetchone()[0]
-
-            cur.close()
-            conn.close()
-
-            if count > 0:
-                print(f"PostgreSQL is ready. Found {count} listings.", flush=True)
-                return
-
-            print(f"PostgreSQL is ready but listings table is empty. Attempt {attempt + 1}/90", flush=True)
-
-        except Exception as exc:
-            print(f"Waiting for PostgreSQL... attempt {attempt + 1}/90: {exc}", flush=True)
-
-        time.sleep(2)
-
-    raise RuntimeError("PostgreSQL data was not ready in time.")
-
-
 def get_elasticsearch_client():
     return Elasticsearch(
         ELASTICSEARCH_HOST,
@@ -65,22 +37,6 @@ def get_elasticsearch_client():
         retry_on_timeout=True,
         max_retries=5
     )
-
-
-def wait_for_elasticsearch(es):
-    print("Waiting for Elasticsearch...", flush=True)
-
-    for attempt in range(90):
-        try:
-            if es.ping():
-                print("Elasticsearch is ready.", flush=True)
-                return
-        except Exception as exc:
-            print(f"Waiting for Elasticsearch... attempt {attempt + 1}/90: {exc}", flush=True)
-
-        time.sleep(2)
-
-    raise RuntimeError("Elasticsearch was not ready in time.")
 
 
 def load_mapping():
@@ -272,10 +228,7 @@ def print_index_summary(es):
 
 
 def main():
-    wait_for_postgres()
-
     es = get_elasticsearch_client()
-    wait_for_elasticsearch(es)
 
     recreate_index(es)
 

@@ -15,42 +15,7 @@ def get_connection():
     )
 
 
-def wait_for_database():
-    for attempt in range(60):
-        try:
-            conn = get_connection()
-            cur = conn.cursor()
-
-            cur.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables
-                    WHERE table_schema = 'public'
-                    AND table_name = 'listings'
-                );
-            """)
-
-            tables_ready = cur.fetchone()[0]
-
-            cur.close()
-            conn.close()
-
-            if tables_ready:
-                print("PostgreSQL is ready and schema exists", flush=True)
-                return
-
-            print("PostgreSQL is running, waiting for schema...", flush=True)
-
-        except Exception as e:
-            print(f"Waiting for PostgreSQL... attempt {attempt + 1}/60", flush=True)
-
-        time.sleep(2)
-
-    raise Exception("PostgreSQL was not ready in time")
-
-
-def insert_data(file_path="data/AB_NYC_2019.csv"):
-    wait_for_database()
-
+def insert_data(file_path="/opt/airflow/src/data/AB_NYC_2019.csv"):
     conn = get_connection()
     cur = conn.cursor()
 
