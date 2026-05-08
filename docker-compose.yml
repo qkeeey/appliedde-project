@@ -76,10 +76,8 @@ services:
         echo 'Waiting for Kibana API to be fully available...';
         sleep 10;
         echo 'Importing Kibana dashboard...';
-        curl -s -X POST 'http://kibana:5601/api/saved_objects/_import?overwrite=true' \
-          -H 'kbn-xsrf: true' \
-          --form file=@'/tmp/kibana/NYC Airbnb Analytics Kibana Dashboard.ndjson';
-        echo '\nDashboard imported successfully!';
+        curl -s -X POST 'http://kibana:5601/api/saved_objects/_import?overwrite=true' -H 'kbn-xsrf: true' --form file=@'/tmp/kibana/NYC Airbnb Analytics Kibana Dashboard.ndjson';
+        echo 'Dashboard imported successfully!';
       "
 
   nifi:

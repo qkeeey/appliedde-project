@@ -25,7 +25,7 @@ Apache NiFi simulates real-time data ingestion by streaming the CSV dataset in b
 - **nifi**: Apache NiFi 2.8.0, runs the streaming flow that chunks the CSV and writes batch files.
 - **nifi-init**: one-shot container that programmatically builds the NiFi flow via the REST API.
 - **airflow-webserver**: Airflow 2.8.1 web UI and REST API endpoint (receives triggers from NiFi).
-- **airflow-scheduler**: executes DAG runs sequentially (`max_active_runs=1`).
+- **airflow-scheduler**: executes DAG runs.
 - **airflow-init**: one-shot container that initializes the Airflow database and admin user.
 - **postgres**: PostgreSQL 15, stores normalized Airbnb data and the Airflow metadata database.
 - **elasticsearch**: Elasticsearch 8.13.2, stores denormalized listing documents.
@@ -79,23 +79,7 @@ Open Kibana:
 
     http://localhost:5601
 
-The Kibana saved objects export is stored at:
-
-    docs/kibana/airbnb_kibana_saved_objects.ndjson
-
-To restore the dashboard manually:
-
-1. Open Kibana.
-2. Go to Stack Management.
-3. Go to Saved Objects.
-4. Click Import.
-5. Select docs/kibana/airbnb_kibana_saved_objects.ndjson.
-6. Enable overwrite if prompted.
-7. Open Analytics → Dashboard.
-
-Dashboard name:
-
-    NYC Airbnb Analytics Dashboard
+The dashboard is automatically imported on startup by the kibana-setup container. Open Analytics -> Dashboard -> NYC Airbnb Analytics.
 
 ## Main Dashboard Visualizations
 
@@ -121,9 +105,9 @@ The dashboard includes:
     │   │   └── airbnb_mapping.json
     │   ├── kibana
     │   ├── nifi
-    │   │   └── Dockerfile              # NiFi with python3-requests
+    │   │   └── Dockerfile             
     │   ├── nifi_init
-    │   │   └── Dockerfile              # Flow builder container
+    │   │   └── Dockerfile              
     │   └── postgres
     │       └── Dockerfile
     ├── docs
@@ -223,11 +207,11 @@ Average price by room type:
 
 ## Known Limitations
 
-- The data source is a static CSV file; NiFi simulates real-time ingestion by chunking and throttling.
+- Currently the data source is a static CSV file; NiFi simulates real-time ingestion by chunking and throttling.
 - Kibana dashboards are restored from exported saved objects.
-- Single-node Elasticsearch setup suitable for local demonstration.
-- The `locations` table uses a select-first insert pattern, requiring `max_active_runs=1` to prevent race conditions.
-- The pipeline is optimized for local execution on a student laptop, not production deployment.
+- The current version uses a single-node Elasticsearch setup suitable for local demonstration.
+- The current pipeline is optimized for local execution on a student laptop, not production deployment.
+- Apache Airflow and Apache NiFi integration are planned as separate pipeline layers.
 
 ## Team Members
 
