@@ -82,6 +82,64 @@ services:
         echo '\nDashboard imported successfully!';
       "
 
+  nifi:
+    build:
+      context: .
+      dockerfile: docker/nifi/Dockerfile
+    container_name: airbnb_nifi
+    hostname: nifi
+    environment:
+      NIFI_JVM_HEAP_INIT: 256m
+      NIFI_JVM_HEAP_MAX: 512m
+      NIFI_WEB_HTTPS_HOST: 0.0.0.0
+      NIFI_WEB_PROXY_HOST: nifi:8443
+      SINGLE_USER_CREDENTIALS_USERNAME: admin
+      SINGLE_USER_CREDENTIALS_PASSWORD: admin1234567890
+      NIFI_INPUT_FILE: /nifi/input/AB_NYC_2019.csv
+      NIFI_OUTPUT_DIR: /nifi/output
+      CHUNK_SIZE: "500"
+      DELAY_SEC: "3"
+      AIRFLOW_BASE_URL: http://airflow-webserver:8080
+      AIRFLOW_DAG_ID: airbnb_pipeline
+      AIRFLOW_USER: admin
+      AIRFLOW_PASSWORD: admin
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./src/data:/nifi/input:ro
+      - nifi_output:/nifi/output
+      - nifi_state:/opt/nifi/nifi-current/state
+      - ./src/nifi/stream_csv.py:/opt/nifi/nifi-current/scripts/stream_csv.py:ro
+    networks:
+      - airbnb_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -kfs https://localhost:8443/nifi/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  nifi-init:
+    build:
+      context: .
+      dockerfile: docker/nifi_init/Dockerfile
+    container_name: airbnb_nifi_init
+    depends_on:
+      nifi:
+        condition: service_healthy
+    environment:
+      NIFI_BASE_URL: https://nifi:8443
+      NIFI_USERNAME: admin
+      NIFI_PASSWORD: admin1234567890
+      NIFI_INPUT_DIR: /nifi/input
+      NIFI_OUTPUT_DIR: /nifi/output
+    networks:
+      - airbnb_network
+
   airflow-init:
     build:
       context: .
@@ -116,12 +174,14 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
       AIRFLOW__WEBSERVER__SECRET_KEY: this_is_a_very_secret_key
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     ports:
       - "8080:8080"
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
       - ./docker/elasticsearch/airbnb_mapping.json:/app/airbnb_mapping.json
+      - nifi_output:/nifi/output:ro
     networks:
       - airbnb_network
     command: webserver
@@ -152,10 +212,15 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       ELASTICSEARCH_HOST: http://elasticsearch:9200
       ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-airbnb_listings}
+      DATA_PATH: /nifi/output
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "5"
+      AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: "2"
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "10"
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
       - ./docker/elasticsearch/airbnb_mapping.json:/app/airbnb_mapping.json
+      - nifi_output:/nifi/output:ro
     networks:
       - airbnb_network
     command: scheduler
@@ -164,6 +229,8 @@ volumes:
   postgres_data:
   elasticsearch_data:
   kibana_data:
+  nifi_output:
+  nifi_state:
 
 networks:
   airbnb_network:

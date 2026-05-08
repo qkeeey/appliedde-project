@@ -15,9 +15,10 @@ with DAG(
     'airbnb_pipeline',
     default_args=default_args,
     description='Automated Airbnb ETL Pipeline via Airflow',
-    schedule_interval='@once',  # Runs once explicitly or can be changed
+    schedule_interval=None,  # Externally triggered by NiFi
     start_date=datetime(2026, 1, 1),
-    catchup=True,
+    catchup=False,
+    max_active_runs=1,  # Process one batch at a time 
     is_paused_upon_creation=False, # Important: Unpaused on creation so it runs on compose up
     tags=['airbnb'],
 ) as dag:
@@ -29,10 +30,11 @@ with DAG(
         append_env=True
     )
 
-    # Task 2: Insert data
+    # Task 2: Insert data (receives BATCH_FILE from dag_run.conf)
     insert_data = BashOperator(
         task_id='insert_data',
         bash_command='python /opt/airflow/src/insert_data.py',
+        env={"BATCH_FILE": "{{ dag_run.conf.get('batch_file', '') if dag_run.conf else '' }}"},
         append_env=True
     )
 
@@ -43,10 +45,11 @@ with DAG(
         append_env=True
     )
 
-    # Task 4: Index into Elasticsearch
+    # Task 4: Index into Elasticsearch (receives BATCH_FILE from dag_run.conf)
     index_airbnb = BashOperator(
         task_id='index_airbnb',
         bash_command='python /opt/airflow/src/es_indexer/index_airbnb.py',
+        env={"BATCH_FILE": "{{ dag_run.conf.get('batch_file', '') if dag_run.conf else '' }}"},
         append_env=True
     )
 

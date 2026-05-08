@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import json
 import time
@@ -16,6 +18,9 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 
 ELASTICSEARCH_HOST = os.getenv("ELASTICSEARCH_HOST", "http://elasticsearch:9200")
 ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_INDEX", "airbnb_listings")
+
+BATCH_FILE = os.getenv("BATCH_FILE", "")
+DATA_PATH = os.getenv("DATA_PATH", "/nifi/output")
 
 MAPPING_PATH = "/app/airbnb_mapping.json"
 
@@ -45,6 +50,7 @@ def load_mapping():
 
 
 def recreate_index(es):
+    """Delete and recreate the ES index from scratch (full-reload mode)."""
     mapping = load_mapping()
 
     if es.indices.exists(index=ELASTICSEARCH_INDEX):
@@ -53,6 +59,16 @@ def recreate_index(es):
 
     print(f"Creating index: {ELASTICSEARCH_INDEX}", flush=True)
     es.indices.create(index=ELASTICSEARCH_INDEX, body=mapping)
+
+
+def ensure_index(es):
+    """Create the ES index only if it does not already exist (incremental mode)."""
+    if not es.indices.exists(index=ELASTICSEARCH_INDEX):
+        mapping = load_mapping()
+        print(f"Creating index: {ELASTICSEARCH_INDEX}", flush=True)
+        es.indices.create(index=ELASTICSEARCH_INDEX, body=mapping)
+    else:
+        print(f"Index {ELASTICSEARCH_INDEX} already exists, skipping creation.", flush=True)
 
 
 def price_category(price):
@@ -79,8 +95,21 @@ def availability_category(days):
     return "high_availability"
 
 
-def fetch_airbnb_documents():
-    query = """
+def _build_fetch_query(listing_ids: list | None = None) -> tuple:
+    """Build the SQL query and parameters for fetching documents.
+
+    Parameters
+    ----------
+    listing_ids : list or None
+        If provided, fetch only these listing IDs (incremental mode).
+        If None, fetch all listings (full-reload mode).
+
+    Returns
+    -------
+    tuple
+        ``(query_string, params_tuple)`` ready for ``cur.execute()``.
+    """
+    base = """
         SELECT
             l.listing_id,
             l.name,
@@ -113,13 +142,58 @@ def fetch_airbnb_documents():
         LEFT JOIN availability a
             ON l.listing_id = a.listing_id
         WHERE l.price IS NOT NULL
-          AND l.price >= 0;
+          AND l.price >= 0
     """
+    if listing_ids:
+        placeholders = ",".join(["%s"] * len(listing_ids))
+        base += f"  AND l.listing_id IN ({placeholders})"
+        return base, tuple(listing_ids)
+    return base, ()
+
+
+def _extract_listing_ids_from_batch(batch_file: str) -> list:
+    """Read the batch CSV and return the listing IDs (first column).
+
+    Parameters
+    ----------
+    batch_file : str
+        Filename of the batch CSV inside ``DATA_PATH``.
+
+    Returns
+    -------
+    list
+        List of integer listing IDs.
+    """
+    import csv
+    batch_path = os.path.join(DATA_PATH, batch_file)
+    ids = []
+    with open(batch_path, "r", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            ids.append(int(row["id"]))
+    print(f"Extracted {len(ids)} listing IDs from {batch_file}", flush=True)
+    return ids
+
+
+def fetch_airbnb_documents(listing_ids: list | None = None):
+    """Fetch denormalized listing documents from PostgreSQL.
+
+    Parameters
+    ----------
+    listing_ids : list or None
+        If provided, fetch only these listings. Otherwise fetch all.
+
+    Returns
+    -------
+    list[dict]
+        Rows as dictionaries.
+    """
+    query, params = _build_fetch_query(listing_ids)
 
     conn = get_postgres_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cur.execute(query)
+    cur.execute(query, params)
     rows = cur.fetchall()
 
     cur.close()
@@ -228,11 +302,26 @@ def print_index_summary(es):
 
 
 def main():
+    """Index Airbnb listings into Elasticsearch.
+
+    Supports two modes controlled by the ``BATCH_FILE`` environment variable:
+
+    - **Incremental** (``BATCH_FILE`` set): creates index if missing, then
+      indexes only the listings from the specified batch file.
+    - **Full-reload** (``BATCH_FILE`` empty): deletes and recreates the
+      index, then indexes all listings from PostgreSQL.
+    """
     es = get_elasticsearch_client()
+    incremental = bool(BATCH_FILE)
 
-    recreate_index(es)
+    if incremental:
+        ensure_index(es)
+        listing_ids = _extract_listing_ids_from_batch(BATCH_FILE)
+        rows = fetch_airbnb_documents(listing_ids)
+    else:
+        recreate_index(es)
+        rows = fetch_airbnb_documents()
 
-    rows = fetch_airbnb_documents()
     index_documents(es, rows)
 
     print_index_summary(es)

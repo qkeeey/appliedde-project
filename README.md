@@ -1,30 +1,36 @@
 # NYC Airbnb Applied Data Engineering Pipeline
 
-This project implements a containerized end-to-end data engineering pipeline for the New York City Airbnb Open Data dataset.
+This project implements a containerized end-to-end data engineering pipeline for the New York City Airbnb Open Data dataset. 
 
-The current pipeline loads Airbnb listing data into PostgreSQL, indexes denormalized listing documents into Elasticsearch, and visualizes the data through Kibana dashboards.
+Apache NiFi simulates real-time data ingestion by streaming the CSV dataset in batches with time-intervals. Each batch triggers an Apache Airflow DAG run via REST API, which upserts the data into PostgreSQL and incrementally indexes it into Elasticsearch. Kibana provides real-time visualization as data streams in.
 
 ## Architecture
 
-CSV Dataset
+    CSV Dataset
+        ↓
+    NiFi (stream_csv.py via ExecuteStreamCommand)
+        ↓  writes 500-row batch files + triggers Airflow REST API
+    Airflow DAG (per-batch, event-driven)
+        ↓  insert_data.py (upsert, no truncate)
+    PostgreSQL
     ↓
-Data Loader Container
+    Elasticsearch Indexer Container
     ↓
-PostgreSQL
-    ↓
-Elasticsearch Indexer Container
-    ↓
-Elasticsearch
-    ↓
-Kibana Dashboard
+    Elasticsearch
+        ↓
+    Kibana Dashboard
 
 ## Services
 
-- postgres: relational storage for normalized Airbnb data.
-- data_loader: Python container that loads the CSV dataset into PostgreSQL.
-- elasticsearch: search and analytics engine.
-- es_indexer: Python container that reads PostgreSQL data and indexes it into Elasticsearch.
-- kibana: dashboard and visualization layer.
+- **nifi**: Apache NiFi 2.8.0, runs the streaming flow that chunks the CSV and writes batch files.
+- **nifi-init**: one-shot container that programmatically builds the NiFi flow via the REST API.
+- **airflow-webserver**: Airflow 2.8.1 web UI and REST API endpoint (receives triggers from NiFi).
+- **airflow-scheduler**: executes DAG runs sequentially (`max_active_runs=1`).
+- **airflow-init**: one-shot container that initializes the Airflow database and admin user.
+- **postgres**: PostgreSQL 15, stores normalized Airbnb data and the Airflow metadata database.
+- **elasticsearch**: Elasticsearch 8.13.2, stores denormalized listing documents.
+- **kibana**: Kibana 8.13.2, dashboard and visualization layer.
+- **kibana-setup**: one-shot container that creates the Kibana data view.
 
 ## Requirements
 
@@ -49,17 +55,23 @@ Start the full pipeline:
     docker compose down -v
     docker compose up --build
 
-## Verify PostgreSQL to Elasticsearch Indexing
+## Verify Pipeline
 
-After the services start, check Elasticsearch:
+The pipeline streams data incrementally. The document count grows from 0 to 48895 over approximately 10 minutes (98 batches x 3-second intervals + processing time).
+
+Check Elasticsearch:
 
     curl http://localhost:9200/_cluster/health?pretty
     curl http://localhost:9200/_cat/indices?v
     curl http://localhost:9200/airbnb_listings/_count?pretty
 
-Expected document count:
+Final expected document count:
 
     48895
+
+Check Airflow DAG runs (should reach 98 successful runs):
+
+    http://localhost:8080  (admin / admin)
 
 ## Kibana
 
@@ -100,10 +112,18 @@ The dashboard includes:
 ## Repository Structure
 
     .
+    ├── dags
+    │   └── airbnb_pipeline.py          # Airflow DAG (event-driven, per-batch)
     ├── docker
+    │   ├── airflow
+    │   │   └── Dockerfile
     │   ├── elasticsearch
     │   │   └── airbnb_mapping.json
     │   ├── kibana
+    │   ├── nifi
+    │   │   └── Dockerfile              # NiFi with python3-requests
+    │   ├── nifi_init
+    │   │   └── Dockerfile              # Flow builder container
     │   └── postgres
     │       └── Dockerfile
     ├── docs
@@ -115,11 +135,11 @@ The dashboard includes:
     │   ├── data
     │   │   └── AB_NYC_2019.csv
     │   ├── es_indexer
-    │   │   ├── Dockerfile
-    │   │   ├── index_airbnb.py
-    │   │   └── requirements.txt
-    │   ├── Dockerfile
-    │   └── insert_data.py
+    │   │   └── index_airbnb.py          # Incremental ES indexer
+    │   ├── nifi
+    │   │   ├── init_nifi_flow.py        # Programmatic NiFi flow builder
+    │   │   └── stream_csv.py           # CSV chunker + Airflow trigger
+    │   └── insert_data.py              # Per-batch upsert into PostgreSQL
     ├── docker-compose.yml
     ├── .env.example
     ├── .gitignore
@@ -203,11 +223,11 @@ Average price by room type:
 
 ## Known Limitations
 
-- The current ingestion step loads a static CSV file rather than a live external data stream.
+- The data source is a static CSV file; NiFi simulates real-time ingestion by chunking and throttling.
 - Kibana dashboards are restored from exported saved objects.
-- The current version uses a single-node Elasticsearch setup suitable for local demonstration.
-- The current pipeline is optimized for local execution on a student laptop, not production deployment.
-- Apache Airflow and Apache NiFi integration are planned as separate pipeline layers.
+- Single-node Elasticsearch setup suitable for local demonstration.
+- The `locations` table uses a select-first insert pattern, requiring `max_active_runs=1` to prevent race conditions.
+- The pipeline is optimized for local execution on a student laptop, not production deployment.
 
 ## Team Members
 

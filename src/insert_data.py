@@ -14,14 +14,99 @@ def get_connection():
         port=os.getenv("POSTGRES_PORT", "5432")
     )
 
+DATA_PATH = os.getenv("DATA_PATH", "/nifi/output")
+BATCH_FILE = os.getenv("BATCH_FILE", "")
 
-def insert_data(file_path="/opt/airflow/src/data/AB_NYC_2019.csv"):
+
+def load_dataframe(path: str, batch_file: str) -> pd.DataFrame:
+    """Load a single batch CSV file from the NiFi output directory.
+
+    Parameters
+    ----------
+    path : str
+        Directory containing batch CSV files produced by NiFi.
+    batch_file : str
+        The specific batch filename to load (e.g., ``batch_0042.csv``).
+
+    Returns
+    -------
+    pd.DataFrame
+        The loaded DataFrame.
+
+    Raises
+    ------
+    ValueError
+        If *batch_file* is empty (no batch specified).
+    FileNotFoundError
+        If the batch file does not exist at the expected path.
+    """
+    if not batch_file:
+        raise ValueError("BATCH_FILE environment variable is required.")
+
+    batch_path = os.path.join(path, batch_file)
+    df = pd.read_csv(batch_path)
+    print(
+        f"Loaded batch '{batch_file}' ({len(df)} rows)",
+        flush=True,
+    )
+    return df
+
+
+def _get_or_create_location(cur, key: tuple) -> int:
+    """Return the location_id for the given key, inserting if necessary.
+
+    Uses a select-first approach to avoid requiring a unique constraint
+    on the locations table.
+
+    Parameters
+    ----------
+    cur : psycopg2.cursor
+        Active database cursor.
+    key : tuple
+        ``(neighbourhood_group, neighbourhood, latitude, longitude)``.
+
+    Returns
+    -------
+    int
+        The ``location_id`` for the given key.
+    """
+    cur.execute(
+        """
+        SELECT location_id FROM locations
+        WHERE neighbourhood_group = %s
+          AND neighbourhood = %s
+          AND latitude = %s
+          AND longitude = %s
+        """,
+        key,
+    )
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
+    cur.execute(
+        """
+        INSERT INTO locations (neighbourhood_group, neighbourhood, latitude, longitude)
+        VALUES (%s, %s, %s, %s)
+        RETURNING location_id
+        """,
+        key,
+    )
+    return cur.fetchone()[0]
+
+
+def insert_data():
+    """Load a single batch CSV into PostgreSQL via upsert.
+
+    Reads the batch file specified by ``BATCH_FILE``, cleans the data,
+    and upserts into all tables without truncating existing records.
+    """
     conn = get_connection()
     cur = conn.cursor()
 
     print("Connected to PostgreSQL", flush=True)
 
-    df = pd.read_csv(file_path)
+    df = load_dataframe(DATA_PATH, BATCH_FILE)
 
     df = df.fillna({
         "name": "Unknown",
@@ -33,12 +118,7 @@ def insert_data(file_path="/opt/airflow/src/data/AB_NYC_2019.csv"):
         df["last_review"] = pd.to_datetime(df["last_review"], errors="coerce").dt.date
         df["last_review"] = df["last_review"].where(pd.notnull(df["last_review"]), None)
 
-    cur.execute("""
-        TRUNCATE TABLE availability, reviews, listings, locations, hosts
-        RESTART IDENTITY CASCADE;
-    """)
-    conn.commit()
-
+    # ── Hosts ────────────────────────────────────────────────────────
     hosts = df[[
         "host_id",
         "host_name",
@@ -71,6 +151,7 @@ def insert_data(file_path="/opt/airflow/src/data/AB_NYC_2019.csv"):
     conn.commit()
     print("Hosts inserted", flush=True)
 
+    # ── Locations ────────────────────────────────────────────────────
     location_map = {}
 
     for _, row in df.iterrows():
@@ -82,22 +163,12 @@ def insert_data(file_path="/opt/airflow/src/data/AB_NYC_2019.csv"):
         )
 
         if key not in location_map:
-            cur.execute("""
-                INSERT INTO locations (
-                    neighbourhood_group,
-                    neighbourhood,
-                    latitude,
-                    longitude
-                )
-                VALUES (%s, %s, %s, %s)
-                RETURNING location_id
-            """, key)
-
-            location_map[key] = cur.fetchone()[0]
+            location_map[key] = _get_or_create_location(cur, key)
 
     conn.commit()
     print("Locations inserted", flush=True)
 
+    # ── Listings ─────────────────────────────────────────────────────
     listing_rows = []
 
     for _, row in df.iterrows():
@@ -139,6 +210,7 @@ def insert_data(file_path="/opt/airflow/src/data/AB_NYC_2019.csv"):
     conn.commit()
     print("Listings inserted", flush=True)
 
+    # ── Reviews ──────────────────────────────────────────────────────
     review_rows = [
         (
             int(row["id"]),
@@ -167,6 +239,7 @@ def insert_data(file_path="/opt/airflow/src/data/AB_NYC_2019.csv"):
     conn.commit()
     print("Reviews inserted", flush=True)
 
+    # ── Availability ─────────────────────────────────────────────────
     availability_rows = [
         (
             int(row["id"]),
